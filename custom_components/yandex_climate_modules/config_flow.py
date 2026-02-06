@@ -43,6 +43,11 @@ def _is_climate_module(device: dict[str, Any]) -> bool:
 class YandexClimateConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
+
+    @staticmethod
+    def async_get_options_flow(config_entry):
+        return OptionsFlowHandler(config_entry)
+
     async def async_step_user(self, user_input: dict[str, Any] | None = None):
         errors: dict[str, str] = {}
 
