@@ -46,13 +46,15 @@ class YandexClimateConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             client = YandexIoTClient(session, token)
             try:
                 await client.validate_token()
+                info = await client.get_user_info()
+                room_map = {r.get('id'): r.get('name') for r in (info.get('rooms') or [])}
                 device_ids = await client.list_device_ids()
                 # Fetch each device details to find climate modules
                 devices = []
                 for did in device_ids:
                     try:
                         dev = await client.get_device(did)
-                        devices.append({"id": dev.id, "name": dev.name, "properties": dev.properties})
+                        devices.append({"id": dev.id, "name": dev.name, "room": dev.room, "room_name": room_map.get(dev.room), "properties": dev.properties})
                     except Exception as e:  # noqa: BLE001
                         _LOGGER.debug("Failed to fetch device %s: %s", did, e)
                 climate = [d for d in devices if _is_climate_module(d)]
@@ -85,10 +87,16 @@ class YandexClimateConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if not climate:
             return self.async_abort(reason="no_modules_found")
 
-        options = {d["id"]: f"{d.get('name','Модуль')} ({d['id'][:8]}...)" for d in climate}
+        options = {d["id"]: f"{d.get('name','Модуль')}" + (f" — {d.get('room_name')}" if d.get('room_name') else "") + f" ({d['id']})" for d in climate}
 
         if user_input is not None:
-            device_ids = list(user_input.get(CONF_DEVICE_IDS, {}).keys())
+            selected = user_input.get(CONF_DEVICE_IDS)
+            if isinstance(selected, dict):
+                device_ids = [k for k, v in selected.items() if v]
+            elif isinstance(selected, list):
+                device_ids = list(selected)
+            else:
+                device_ids = []
             if not device_ids:
                 errors["base"] = "select_at_least_one"
             else:
