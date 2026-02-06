@@ -12,6 +12,16 @@ class YandexIoTApiError(Exception):
     """Raised for Yandex IoT API errors."""
 
 
+class YandexIoTAuthError(YandexIoTApiError):
+    """401 Unauthorized."""
+
+
+class YandexIoTPermissionError(YandexIoTApiError):
+    """403 Forbidden (missing scope / permission)."""
+
+    """Raised for Yandex IoT API errors."""
+
+
 @dataclass(frozen=True)
 class YandexDevice:
     id: str
@@ -20,10 +30,17 @@ class YandexDevice:
     properties: list[dict[str, Any]]
 
 
+def _normalize_token(token: str) -> str:
+    token = (token or "").strip()
+    if token.lower().startswith("bearer "):
+        token = token.split(None, 1)[1].strip()
+    return token
+
+
 class YandexIoTClient:
     def __init__(self, session: aiohttp.ClientSession, token: str) -> None:
         self._session = session
-        self._token = token
+        self._token = _normalize_token(token)
 
     def _headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self._token}"}
@@ -36,6 +53,10 @@ class YandexIoTClient:
             timeout=aiohttp.ClientTimeout(total=20),
         ) as resp:
             text = await resp.text()
+            if resp.status == 401:
+                raise YandexIoTAuthError(f"HTTP 401 Unauthorized: {text[:300]}")
+            if resp.status == 403:
+                raise YandexIoTPermissionError(f"HTTP 403 Forbidden: {text[:300]}")
             if resp.status >= 400:
                 raise YandexIoTApiError(f"HTTP {resp.status}: {text[:300]}")
             try:

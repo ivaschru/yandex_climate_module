@@ -2,13 +2,21 @@ from __future__ import annotations
 
 from typing import Any
 
+import logging
 import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .api import YandexIoTClient, YandexIoTApiError
+from .api import (
+    YandexIoTClient,
+    YandexIoTApiError,
+    YandexIoTAuthError,
+    YandexIoTPermissionError,
+)
 from .const import DOMAIN, CONF_TOKEN, CONF_DEVICE_IDS, CLIMATE_INSTANCES
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _is_climate_module(device: dict[str, Any]) -> bool:
@@ -30,7 +38,9 @@ class YandexClimateConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            token = user_input[CONF_TOKEN]
+            token = (user_input[CONF_TOKEN] or "").strip()
+            if token.lower().startswith("bearer "):
+                token = token.split(None, 1)[1].strip()
             session = async_get_clientsession(self.hass)
             client = YandexIoTClient(session, token)
             try:
@@ -43,9 +53,17 @@ class YandexClimateConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     self._token = token
                     self._climate_list = climate
                     return await self.async_step_select_modules()
-            except YandexIoTApiError:
-                errors["base"] = "auth"
-            except Exception:  # noqa: BLE001
+            except YandexIoTAuthError as e:
+                _LOGGER.debug("Token validation failed (401): %s", e)
+                errors["base"] = "auth_401"
+            except YandexIoTPermissionError as e:
+                _LOGGER.debug("Token missing permissions (403): %s", e)
+                errors["base"] = "auth_403"
+            except YandexIoTApiError as e:
+                _LOGGER.debug("Yandex IoT API error: %s", e)
+                errors["base"] = "api_error"
+            except Exception as e:  # noqa: BLE001
+                _LOGGER.exception("Unexpected error during config flow: %s", e)
                 errors["base"] = "unknown"
 
         schema = vol.Schema({vol.Required(CONF_TOKEN): str})

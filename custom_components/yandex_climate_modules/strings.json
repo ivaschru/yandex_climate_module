@@ -20,7 +20,10 @@
       "auth": "Token is invalid or missing iot.view permission.",
       "unknown": "Unexpected error.",
       "no_modules_found": "No climate modules found in your Yandex account.",
-      "select_at_least_one": "Select at least one module."
+      "select_at_least_one": "Select at least one module.",
+      "auth_401": "HTTP 401: token is invalid/expired or was pasted incorrectly (must be token only, no Bearer prefix).",
+      "auth_403": "HTTP 403: token is valid, but missing required permission (need iot.view).",
+      "api_error": "Yandex IoT API error while validating token or listing devices. Check logs for details."
     },
     "abort": {
       "no_modules_found": "No climate modules found."
