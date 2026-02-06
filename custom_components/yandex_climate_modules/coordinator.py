@@ -23,6 +23,7 @@ class YandexClimateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         client: YandexIoTClient,
         device_ids: list[str],
         interval_s: int,
+        room_map: dict[str, str] | None = None,
     ) -> None:
         super().__init__(
             hass,
@@ -32,6 +33,7 @@ class YandexClimateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self._client = client
         self.device_ids = device_ids
+        self._room_map = room_map or {}
 
     async def _async_update_data(self) -> dict[str, Any]:
         try:
@@ -42,6 +44,7 @@ class YandexClimateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 out[dev.id] = {
                     "name": dev.name,
                     "room": dev.room,
+                    "room_name": self._room_map.get(dev.room),
                     "properties": dev.properties,
                 }
             return out

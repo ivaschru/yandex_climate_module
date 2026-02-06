@@ -16,7 +16,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     interval_s: int = entry.options.get("update_interval", DEFAULT_UPDATE_INTERVAL)
 
     client = YandexIoTClient(session, token)
-    coordinator = YandexClimateCoordinator(hass, client, device_ids, interval_s)
+    info = await client.get_user_info()
+    room_map = {r.get('id'): r.get('name') for r in (info.get('rooms') or [])}
+    coordinator = YandexClimateCoordinator(hass, client, device_ids, interval_s, room_map)
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {

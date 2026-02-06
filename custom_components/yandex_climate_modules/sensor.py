@@ -89,7 +89,10 @@ class YandexClimateBase(SensorEntity):
 
     @property
     def device_info(self):
-        name = self._device_payload.get("name") or "Yandex Climate Module"
+        base = self._device_payload.get("name") or "Yandex Climate Module"
+        room = self._device_payload.get("room_name")
+        tail = self.device_id[-5:]
+        name = f"{base} {room} ({tail})" if room else f"{base} ({tail})"
         return {
             "identifiers": {(DOMAIN, self.device_id)},
             "name": name,
@@ -107,12 +110,20 @@ class YandexClimateBase(SensorEntity):
 class YandexClimateSensor(YandexClimateBase):
     _attr_state_class = SensorStateClass.MEASUREMENT
 
+    @property
+    def name(self) -> str:
+        base = self._device_payload.get("name") or "Yandex Climate Module"
+        room = self._device_payload.get("room_name")
+        tail = self.device_id[-5:]
+        device_name = f"{base} {room} ({tail})" if room else f"{base} ({tail})"
+        title, _, _ = INST_TO_META[self.instance]
+        return f"{device_name} {title}"
+
     def __init__(self, coordinator, device_id: str, instance: str) -> None:
         super().__init__(coordinator, device_id)
         self.instance = instance
 
         title, unit, dev_class = INST_TO_META[instance]
-        self._attr_name = f"Yandex Climate {title}"
         self._attr_unique_id = f"{device_id}_{instance}"
         self._attr_native_unit_of_measurement = unit
         if dev_class:
@@ -140,11 +151,17 @@ class YandexClimateSensor(YandexClimateBase):
 class YandexClimateDerivedSensor(YandexClimateBase):
     """Diagnostic sensors derived from Yandex device properties."""
 
+    @property
+    def name(self) -> str:
+        base = self._device_payload.get("name") or "Yandex Climate Module"
+        room = self._device_payload.get("room_name")
+        tail = self.device_id[-5:]
+        device_name = f"{base} {room} ({tail})" if room else f"{base} ({tail})"
+        return f"{device_name} {self.kind.name_suffix}"
+
     def __init__(self, coordinator, device_id: str, kind: DerivedKind) -> None:
         super().__init__(coordinator, device_id)
         self.kind = kind
-
-        self._attr_name = f"Yandex Climate {kind.name_suffix}"
         self._attr_unique_id = f"{device_id}_{kind.key}"
 
         if kind.key == "last_updated":
