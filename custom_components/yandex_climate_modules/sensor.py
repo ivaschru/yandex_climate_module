@@ -4,12 +4,16 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from homeassistant.components.sensor import SensorEntity, SensorDeviceClass, SensorStateClass
+from homeassistant.components.sensor import (
+    SensorDeviceClass,
+    SensorEntity,
+    SensorStateClass,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN, INST_TEMPERATURE, INST_HUMIDITY, INST_CO2
+from .const import DOMAIN, INST_CO2, INST_HUMIDITY, INST_TEMPERATURE
 
 INST_TO_META: dict[str, tuple[str, str, SensorDeviceClass | None]] = {
     INST_TEMPERATURE: ("Temperature", "°C", SensorDeviceClass.TEMPERATURE),
@@ -25,7 +29,6 @@ class DerivedKind:
 
 
 DER_LAST_UPDATED = DerivedKind("last_updated", "Last Updated")
-DER_AGE = DerivedKind("age", "Updated Age")
 
 
 def _find_prop(properties: list[dict[str, Any]], instance: str) -> dict[str, Any] | None:
@@ -57,16 +60,18 @@ async def async_setup_entry(
     entities: list[SensorEntity] = []
 
     for did in device_ids:
+        # Main measurements
         for inst in (INST_TEMPERATURE, INST_HUMIDITY, INST_CO2):
             entities.append(YandexClimateSensor(coordinator, did, inst))
+
+        # Diagnostic timestamp (last updated)
         entities.append(YandexClimateDerivedSensor(coordinator, did, DER_LAST_UPDATED))
-        entities.append(YandexClimateDerivedSensor(coordinator, did, DER_AGE))
 
     async_add_entities(entities)
 
 
 class YandexClimateBase(SensorEntity):
-    _attr_state_class = SensorStateClass.MEASUREMENT
+    """Base class for all sensors in this integration."""
 
     def __init__(self, coordinator, device_id: str) -> None:
         self.coordinator = coordinator
@@ -90,8 +95,16 @@ class YandexClimateBase(SensorEntity):
             "model": "Climate module (IoT API)",
         }
 
+    async def async_added_to_hass(self) -> None:
+        self.async_on_remove(self.coordinator.async_add_listener(self.async_write_ha_state))
+
+    async def async_update(self) -> None:
+        await self.coordinator.async_request_refresh()
+
 
 class YandexClimateSensor(YandexClimateBase):
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
     def __init__(self, coordinator, device_id: str, instance: str) -> None:
         super().__init__(coordinator, device_id)
         self.instance = instance
@@ -114,33 +127,28 @@ class YandexClimateSensor(YandexClimateBase):
         val = (p.get("state") or {}).get("value")
         if val is None:
             return None
+
         if self.instance in (INST_TEMPERATURE, INST_HUMIDITY):
             return round(float(val), 1)
         if self.instance == INST_CO2:
             return int(round(float(val), 0))
         return val
 
-    async def async_added_to_hass(self) -> None:
-        self.async_on_remove(self.coordinator.async_add_listener(self.async_write_ha_state))
-
-    async def async_update(self) -> None:
-        await self.coordinator.async_request_refresh()
-
 
 class YandexClimateDerivedSensor(YandexClimateBase):
+    """Diagnostic sensors derived from Yandex device properties."""
+
     def __init__(self, coordinator, device_id: str, kind: DerivedKind) -> None:
         super().__init__(coordinator, device_id)
         self.kind = kind
+
         self._attr_name = f"Yandex Climate {kind.name_suffix}"
         self._attr_unique_id = f"{device_id}_{kind.key}"
 
+        # last_updated is a timestamp sensor
         if kind.key == "last_updated":
             self._attr_device_class = SensorDeviceClass.TIMESTAMP
             self._attr_state_class = None
-        else:
-            self._attr_icon = "mdi:clock-outline"
-            self._attr_native_unit_of_measurement = "s"
-            self._attr_state_class = SensorStateClass.MEASUREMENT
 
     @property
     def native_value(self):
@@ -149,15 +157,8 @@ class YandexClimateDerivedSensor(YandexClimateBase):
         if ts is None:
             return None
 
+        # IMPORTANT: must return datetime object for TIMESTAMP device class
         if self.kind.key == "last_updated":
-            dt = datetime.fromtimestamp(ts, tz=timezone.utc)
-            return dt.isoformat()
+            return datetime.fromtimestamp(ts, tz=timezone.utc)
 
-        now_ts = datetime.now(tz=timezone.utc).timestamp()
-        return int(round(now_ts - ts, 0))
-
-    async def async_added_to_hass(self) -> None:
-        self.async_on_remove(self.coordinator.async_add_listener(self.async_write_ha_state))
-
-    async def async_update(self) -> None:
-        await self.coordinator.async_request_refresh()
+        return None
