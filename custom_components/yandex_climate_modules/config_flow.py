@@ -88,7 +88,7 @@ class YandexClimateConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         options = {d["id"]: f"{d.get('name','Модуль')} ({d['id'][:8]}...)" for d in climate}
 
         if user_input is not None:
-            device_ids = user_input[CONF_DEVICE_IDS]
+            device_ids = list(user_input.get(CONF_DEVICE_IDS, {}).keys())
             if not device_ids:
                 errors["base"] = "select_at_least_one"
             else:
@@ -96,9 +96,9 @@ class YandexClimateConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     title="Yandex Climate Modules",
                     data={
                         CONF_TOKEN: getattr(self, "_token"),
-                        CONF_DEVICE_IDS: list(device_ids),
+                        CONF_DEVICE_IDS: device_ids,
                     },
                 )
 
-                schema = vol.Schema({vol.Required(CONF_DEVICE_IDS): cv.multi_select(options)})
-return self.async_show_form(step_id="select_modules", data_schema=schema, errors=errors)
+        schema = vol.Schema({vol.Required(CONF_DEVICE_IDS): cv.multi_select(options)})
+        return self.async_show_form(step_id="select_modules", data_schema=schema, errors=errors)
