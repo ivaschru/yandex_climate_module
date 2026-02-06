@@ -75,6 +75,8 @@ async def async_setup_entry(
 class YandexClimateBase(SensorEntity):
     """Base class for all sensors in this integration."""
 
+    _attr_should_poll = False
+
     def __init__(self, coordinator, device_id: str) -> None:
         self.coordinator = coordinator
         self.device_id = device_id
@@ -102,9 +104,6 @@ class YandexClimateBase(SensorEntity):
 
     async def async_added_to_hass(self) -> None:
         self.async_on_remove(self.coordinator.async_add_listener(self.async_write_ha_state))
-
-    async def async_update(self) -> None:
-        await self.coordinator.async_request_refresh()
 
 
 class YandexClimateSensor(YandexClimateBase):
