@@ -1,0 +1,163 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any
+
+from homeassistant.components.sensor import SensorEntity, SensorDeviceClass, SensorStateClass
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+
+from .const import DOMAIN, INST_TEMPERATURE, INST_HUMIDITY, INST_CO2
+
+INST_TO_META: dict[str, tuple[str, str, SensorDeviceClass | None]] = {
+    INST_TEMPERATURE: ("Temperature", "°C", SensorDeviceClass.TEMPERATURE),
+    INST_HUMIDITY: ("Humidity", "%", SensorDeviceClass.HUMIDITY),
+    INST_CO2: ("CO2", "ppm", None),
+}
+
+
+@dataclass(frozen=True)
+class DerivedKind:
+    key: str
+    name_suffix: str
+
+
+DER_LAST_UPDATED = DerivedKind("last_updated", "Last Updated")
+DER_AGE = DerivedKind("age", "Updated Age")
+
+
+def _find_prop(properties: list[dict[str, Any]], instance: str) -> dict[str, Any] | None:
+    for p in properties:
+        st = p.get("state") or {}
+        if st.get("instance") == instance:
+            return p
+    return None
+
+
+def _last_updated_max(properties: list[dict[str, Any]]) -> float | None:
+    vals: list[float] = []
+    for p in properties:
+        lu = p.get("last_updated")
+        if isinstance(lu, (int, float)):
+            vals.append(float(lu))
+    return max(vals) if vals else None
+
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    data = hass.data[DOMAIN][entry.entry_id]
+    coordinator = data["coordinator"]
+    device_ids: list[str] = entry.data.get("device_ids", [])
+
+    entities: list[SensorEntity] = []
+
+    for did in device_ids:
+        for inst in (INST_TEMPERATURE, INST_HUMIDITY, INST_CO2):
+            entities.append(YandexClimateSensor(coordinator, did, inst))
+        entities.append(YandexClimateDerivedSensor(coordinator, did, DER_LAST_UPDATED))
+        entities.append(YandexClimateDerivedSensor(coordinator, did, DER_AGE))
+
+    async_add_entities(entities)
+
+
+class YandexClimateBase(SensorEntity):
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator, device_id: str) -> None:
+        self.coordinator = coordinator
+        self.device_id = device_id
+
+    @property
+    def available(self) -> bool:
+        return self.device_id in (self.coordinator.data or {})
+
+    @property
+    def _device_payload(self) -> dict[str, Any]:
+        return (self.coordinator.data or {}).get(self.device_id, {})
+
+    @property
+    def device_info(self):
+        name = self._device_payload.get("name") or "Yandex Climate Module"
+        return {
+            "identifiers": {(DOMAIN, self.device_id)},
+            "name": name,
+            "manufacturer": "Yandex",
+            "model": "Climate module (IoT API)",
+        }
+
+
+class YandexClimateSensor(YandexClimateBase):
+    def __init__(self, coordinator, device_id: str, instance: str) -> None:
+        super().__init__(coordinator, device_id)
+        self.instance = instance
+
+        title, unit, dev_class = INST_TO_META[instance]
+        self._attr_name = f"Yandex Climate {title}"
+        self._attr_unique_id = f"{device_id}_{instance}"
+        self._attr_native_unit_of_measurement = unit
+        if dev_class:
+            self._attr_device_class = dev_class
+        if instance == INST_CO2:
+            self._attr_icon = "mdi:molecule-co2"
+
+    @property
+    def native_value(self):
+        props = self._device_payload.get("properties") or []
+        p = _find_prop(props, self.instance)
+        if not p:
+            return None
+        val = (p.get("state") or {}).get("value")
+        if val is None:
+            return None
+        if self.instance in (INST_TEMPERATURE, INST_HUMIDITY):
+            return round(float(val), 1)
+        if self.instance == INST_CO2:
+            return int(round(float(val), 0))
+        return val
+
+    async def async_added_to_hass(self) -> None:
+        self.async_on_remove(self.coordinator.async_add_listener(self.async_write_ha_state))
+
+    async def async_update(self) -> None:
+        await self.coordinator.async_request_refresh()
+
+
+class YandexClimateDerivedSensor(YandexClimateBase):
+    def __init__(self, coordinator, device_id: str, kind: DerivedKind) -> None:
+        super().__init__(coordinator, device_id)
+        self.kind = kind
+        self._attr_name = f"Yandex Climate {kind.name_suffix}"
+        self._attr_unique_id = f"{device_id}_{kind.key}"
+
+        if kind.key == "last_updated":
+            self._attr_device_class = SensorDeviceClass.TIMESTAMP
+            self._attr_state_class = None
+        else:
+            self._attr_icon = "mdi:clock-outline"
+            self._attr_native_unit_of_measurement = "s"
+            self._attr_state_class = SensorStateClass.MEASUREMENT
+
+    @property
+    def native_value(self):
+        props = self._device_payload.get("properties") or []
+        ts = _last_updated_max(props)
+        if ts is None:
+            return None
+
+        if self.kind.key == "last_updated":
+            dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+            return dt.isoformat()
+
+        now_ts = datetime.now(tz=timezone.utc).timestamp()
+        return int(round(now_ts - ts, 0))
+
+    async def async_added_to_hass(self) -> None:
+        self.async_on_remove(self.coordinator.async_add_listener(self.async_write_ha_state))
+
+    async def async_update(self) -> None:
+        await self.coordinator.async_request_refresh()

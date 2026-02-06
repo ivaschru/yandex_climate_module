@@ -1,0 +1,66 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+import aiohttp
+
+from .const import YANDEX_IOT_BASE
+
+
+class YandexIoTApiError(Exception):
+    """Raised for Yandex IoT API errors."""
+
+
+@dataclass(frozen=True)
+class YandexDevice:
+    id: str
+    name: str
+    room: str | None
+    properties: list[dict[str, Any]]
+
+
+class YandexIoTClient:
+    def __init__(self, session: aiohttp.ClientSession, token: str) -> None:
+        self._session = session
+        self._token = token
+
+    def _headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self._token}"}
+
+    async def _get_json(self, path: str) -> dict[str, Any]:
+        url = f"{YANDEX_IOT_BASE}{path}"
+        async with self._session.get(
+            url,
+            headers=self._headers(),
+            timeout=aiohttp.ClientTimeout(total=20),
+        ) as resp:
+            text = await resp.text()
+            if resp.status >= 400:
+                raise YandexIoTApiError(f"HTTP {resp.status}: {text[:300]}")
+            try:
+                return await resp.json()
+            except Exception as e:  # noqa: BLE001
+                raise YandexIoTApiError(f"Bad JSON: {e}. Body: {text[:300]}") from e
+
+    async def validate_token(self) -> None:
+        data = await self._get_json("/user/info")
+        if data.get("status") != "ok":
+            raise YandexIoTApiError(f"Unexpected response: {data}")
+
+    async def list_devices(self) -> list[dict[str, Any]]:
+        data = await self._get_json("/devices")
+        if data.get("status") != "ok":
+            raise YandexIoTApiError(f"Unexpected response: {data}")
+        return data.get("devices", [])
+
+    async def get_device(self, device_id: str) -> YandexDevice:
+        data = await self._get_json(f"/devices/{device_id}")
+        if data.get("status") != "ok":
+            raise YandexIoTApiError(f"Unexpected response: {data}")
+        return YandexDevice(
+            id=data["id"],
+            name=data.get("name") or device_id,
+            room=data.get("room"),
+            properties=data.get("properties") or [],
+        )
